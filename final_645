@@ -1,0 +1,13 @@
+import pandas as pd
+
+df = pd.read_csv(
+    "/Users/emilyeames/Desktop/curiosity/Train_CSV.csv",
+    header=None,
+    names=["image_path", "label"]
+)
+
+df = df[df["label"] != "LABELS"]
+df["label"] = df["label"].astype(int)
+
+print("Number of classes:", df["label"].nunique())
+print("Unique labels:", sorted(df["label"].unique()))
