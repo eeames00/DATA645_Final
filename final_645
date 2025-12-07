@@ -124,7 +124,7 @@ class SimpleCNN(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(2),
 
-            nn.Conv2d(32, 64, 3, padding=1), #second convolution to find high-level patterns (like shapres and rocks)
+            nn.Conv2d(32, 64, 3, padding=1), #second convolution to find high-level patterns (like shapes and rocks)
             nn.ReLU(),
             nn.MaxPool2d(2),
 
@@ -146,5 +146,148 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #is gpu do
 model = SimpleCNN(num_classes=25).to(device) #creates the model 
 criterion = nn.CrossEntropyLoss() #correct loss for multi-class classification and integer lables)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3) #using adam optimizer as default - will update all model weights
+
+
+### Sets up training/call training and validation 
+train_loader = DataLoader(
+    train_data,
+    batch_size=32,
+    shuffle=True,
+    num_workers=0
+)
+
+val_loader = DataLoader(
+    val_data,
+    batch_size=32,
+    shuffle=False,
+    num_workers=0
+)
+
+### Check model again 
+
+images, labels = next(iter(train_loader))
+print(images.shape)   # Should be 32, 3, 224, 224
+print(labels.shape)   # Should be 32
+
+### helper function for accuracy - compares predictions and true labels and then computes the % of correct in batch
+
+def accuracy(outputs, labels):
+    _, preds = torch.max(outputs, dim=1)
+    return (preds == labels).sum().item() / labels.size(0)
+
+### --- Training Model ---
+
+def train_model(model, train_loader, val_loader, criterion, optimizer, epochs=10):
+    for epoch in range(epochs):
+        # training set up 
+        model.train()
+        train_loss = 0
+        train_acc = 0
+        
+        for images, labels in train_loader:
+            images, labels = images.to(device), labels.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels) # loss function
+
+            loss.backward() #backpropagation 
+            optimizer.step() #updates weights 
+
+            train_loss += loss.item()
+            train_acc += accuracy(outputs, labels)
+#Tracks metrics
+        train_loss /= len(train_loader)
+        train_acc /= len(train_loader)
+
+        # validation check
+        model.eval()
+        val_loss = 0
+        val_acc = 0
+
+        with torch.no_grad():
+            for images, labels in val_loader:
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+                val_loss += loss.item()
+                val_acc += accuracy(outputs, labels)
+
+        val_loss /= len(val_loader)
+        val_acc /= len(val_loader)
+#print when each epoch is done and shows metrics 
+        print(
+            f"Epoch {epoch+1}/{epochs} | "
+            f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | "
+            f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}"
+        )
+
+### actually trains the model - takes a while 
+
+train_model(
+    model,
+    train_loader,
+    val_loader,
+    criterion,
+    optimizer,
+    epochs=10
+)
+
+
+### Ideally we want to see our Train Loss decrease after each epoch (same for val loss). 
+### We see our training loss steadily decreasing after each run!!!
+
+### With both training loss and val loss decreasing we want to then see Training Accuracy increase (same for val acc)
+### We see trainig accuracy increasing!!!
+### however, validation accuray and loss are kind of all over the place -> overfitting
+### This isn't totally unexpected since the Mars Images are difficult and we might have come class imbalance 
+### we also do not have any regularization yet (no dropout or anything like that)
+
+### Overall from this we can say that our baseline CNN shows strong learning but significant overfitting on Mars terrain classification
+
+
+### save our model 
+torch.save(model.state_dict(), "mars_cnn.pth")
+
+### Try adding in some regularization techniques - we are going to use dropout and ResNet-18 (part of our proposal for the baseline but we decied to
+### add it in later instead)
+
+### Updated CNN (second round) ResNet 18 w/ Droupout (also part of PyTorch)
+
+model = models.resnet18(pretrained=True) ### changed from SimpleCNN to ResNet18
+
+model.fc = nn.Sequential(
+    nn.Dropout(0.5),              ### ADDED DROPUT 50% 
+    nn.Linear(model.fc.in_features, 25)
+)
+
+model = model.to(device)
+
+optimizer = torch.optim.Adam(
+    model.fc.parameters(),
+    lr=1e-3,
+    weight_decay=1e-4
+)
+
+criterion = nn.CrossEntropyLoss()
+
+
+### train with new CNN - takes even longer
+train_model(
+    model,
+    train_loader,
+    val_loader,
+    criterion,
+    optimizer,
+    epochs=10
+)
+
+
+### Results are a lot better. Our validation accuracy went from about 12% to 79%. This tells us that the ResNet18 in addition to the Dropout and
+### weight decay greatly improved the CNN pipeline. Not to mention or training accuracy is now about 95%
+
+###Using transfer learning, specifically our pretrained ResNet-18 with dropout significally improved our models generalization performance on Mars Terrain Image 
+### Classification compared to ut scratch CNN model. 
 
 
