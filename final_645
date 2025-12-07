@@ -1,13 +1,150 @@
-import pandas as pd
+### --- Load in Libraries --- ###
 
-df = pd.read_csv(
-    "/Users/emilyeames/Desktop/curiosity/Train_CSV.csv",
-    header=None,
-    names=["image_path", "label"]
+import torch
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
+import torchvision.transforms as transforms
+import os
+import matplotlib.pyplot as plt
+import torch.nn as nn
+import torch.nn.functional as F
+
+### --- Set up Dataloader (so we can call multiple pictures/data easier) --- ###
+
+class MarsDataset(Dataset):
+    def __init__(self, txt_file, root_dir, transform=None):
+        self.root_dir = root_dir #root path
+        self.transform = transform
+        
+        with open(txt_file, "r") as f:
+            self.samples = [line.strip().split() for line in f] #reads and breaks down each image title to find what it's labels as and so on - the last number in the JPG title is what image category it is. 
+
+    def __len__(self):
+        return len(self.samples) #computes epoch sizes, batch counts, ect. 
+
+    def __getitem__(self, idx): #part of PyTorch -> gets the path and label 
+        img_path, label = self.samples[idx]
+        full_path = os.path.join(self.root_dir, img_path)
+
+        image = Image.open(full_path).convert("RGB")
+        label = int(label) #converts label to integer 
+
+        if self.transform:
+            image = self.transform(image) #cleans/transform image if need me
+
+        return image, label #call to return the sample
+
+
+### --- Load Path --_ ### NEED TO UPDATE WITH OWN PATH
+
+train_data = MarsDataset(
+    txt_file="/Users/emilyeames/Desktop/curiosity/train-calibrated-shuffled.txt",
+    root_dir="/Users/emilyeames/Desktop/curiosity",
+    transform=None
 )
 
-df = df[df["label"] != "LABELS"]
-df["label"] = df["label"].astype(int)
+# Quick check that we have the data 
+print("Number of samples:", len(train_data)) #we should see 3746
 
-print("Number of classes:", df["label"].nunique())
-print("Unique labels:", sorted(df["label"].unique()))
+
+### --- Check that we have the data and it's going to be called correctly --- ###
+
+#Ex: find the lable, image type, and size
+
+image, label = train_data[0]
+
+print("Label:", label)
+print("Image type:", type(image))
+print("Image size:", image.size)
+
+# Pulls example image 
+plt.imshow(image)
+plt.title(f"Label: {label}")
+plt.axis("off")
+plt.show()
+
+
+# Tells us what the image classification category it is NEED TO UPDATE WITH OWN PATH
+
+with open("/Users/emilyeames/Desktop/curiosity/msl_synset_words-indexed.txt") as f:
+    labels = dict(line.strip().split(maxsplit=1) for line in f)
+
+print("Class name:", labels[str(label)])
+
+### --- Image Transformation (normalize, resize, flip if need be -> just makes sure each image will show up just like the example above --- ###
+
+train_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomHorizontalFlip(),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+])
+
+val_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)
+])
+
+
+### --- Set up training and validation sets ---- ### NEED TO UPDATE WITH OWN PATH
+
+DATA_ROOT = "/Users/emilyeames/Desktop/curiosity"
+
+train_data = MarsDataset(
+    txt_file=f"{DATA_ROOT}/train-calibrated-shuffled.txt",
+    root_dir=DATA_ROOT,
+    transform=train_transform
+)
+
+val_data = MarsDataset(
+    txt_file=f"{DATA_ROOT}/val-calibrated-shuffled.txt",
+    root_dir=DATA_ROOT,
+    transform=val_transform
+)
+
+
+### --- just another way to check if code is still working (my paths were being annoying) --- ###
+
+print(len(train_data))
+image, label = train_data[0]
+print(label)
+
+
+
+### --- First CNN using SimpleCNN (also from PyTorch)--- ###
+
+class SimpleCNN(nn.Module):
+    def __init__(self, num_classes=25): #matches terrian labels 
+        super().__init__()
+
+        self.features = nn.Sequential( #where the model learns visual pattern 
+            nn.Conv2d(3, 32, 3, padding=1), #fist convolution to find basic patterns 
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(32, 64, 3, padding=1), #second convolution to find high-level patterns (like shapres and rocks)
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(64, 128, 3, padding=1), #third convolution - summarizes the image 
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1))
+        )
+
+        self.classifier = nn.Linear(128, num_classes) #classifer 
+
+    def forward(self, x): #forward pass
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        return self.classifier(x)
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #is gpu doesnt work falls back to cpu (PyTorch)
+
+model = SimpleCNN(num_classes=25).to(device) #creates the model 
+criterion = nn.CrossEntropyLoss() #correct loss for multi-class classification and integer lables)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3) #using adam optimizer as default - will update all model weights
+
+
