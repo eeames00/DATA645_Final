@@ -1,4 +1,11 @@
-### --- Load in Libraries --- ###
+###The Dataset is from NASA 
+
+### URL: https://zenodo.org/records/1049137 
+    ### uses msl.images.zip 60.6 MB
+
+###This data set consists of 6691 images spanning 24 classes that were collected by the Mars Science Laboratory  - (MSL, Curosity)
+
+### --- Load in Libraries --- ### 
 
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -8,6 +15,12 @@ import os
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import models
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+from sklearn.metrics import classification_report
+from torch.utils.data import Subset
+import numpy as np
 
 ### --- Set up Dataloader (so we can call multiple pictures/data easier) --- ###
 
@@ -290,4 +303,139 @@ train_model(
 ###Using transfer learning, specifically our pretrained ResNet-18 with dropout significally improved our models generalization performance on Mars Terrain Image 
 ### Classification compared to ut scratch CNN model. 
 
+### Test set up
 
+test_data = MarsDataset(
+    txt_file=f"{DATA_ROOT}/test-calibrated-shuffled.txt",
+    root_dir=DATA_ROOT,
+    transform=val_transform
+)
+
+test_loader = DataLoader(
+    test_data,
+    batch_size=32,
+    shuffle=False,
+    num_workers=0
+)
+
+
+### evaluates trained model on our test/validation 
+
+def evaluate_model(model, data_loader):
+    model.eval()
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for images, labels in data_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            preds = torch.argmax(outputs, dim=1)
+
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    return all_labels, all_preds
+
+### Runs our model on the testing set
+
+y_true, y_pred = evaluate_model(model, test_loader)
+
+
+### Analysis and Performance Metrics 
+
+
+### this shows up the precision, recall, f1, and support for each classification label. Where we see 0's just means there werent any of these pictures in the testing set
+
+labels = list(range(25))
+
+print(
+    classification_report(
+        y_true,
+        y_pred,
+        labels=labels,
+        target_names=target_names,
+        digits=3,
+        zero_division=0
+    )
+)
+
+### Confusion matrix for misclassification/identifies the most difficult terrain classes. 
+
+cm = confusion_matrix(y_true, y_pred)
+
+plt.figure(figsize=(12,10))
+sns.heatmap(
+    cm,
+    cmap="Oranges",
+    square=True,
+    cbar=True
+)
+plt.xlabel("Predicted Class")
+plt.ylabel("True Class")
+plt.title("Confusion Matrix – Mars Terrain Classification")
+plt.show()
+
+
+### --- Comparing how the model performs using 100, 500, and then 2000 images
+###first break down into three subsets
+def get_subset(dataset, n):
+    indices = np.random.choice(len(dataset), size=n, replace=False)
+    return Subset(dataset, indices)
+
+train_sizes = [100, 500, 2000]
+results = {}
+
+for n in train_sizes:
+    print(f"\nTraining with {n} images")
+
+    small_train_data = get_subset(train_data, n)
+    small_train_loader = DataLoader(
+        small_train_data,
+        batch_size=32,
+        shuffle=True,
+        num_workers=0
+    )
+
+    #test model each time (100, 500, then 2000)
+    model = models.resnet18(pretrained=True)
+    for param in model.parameters():
+        param.requires_grad = False
+
+    model.fc = nn.Sequential(
+        nn.Dropout(0.5),
+        nn.Linear(model.fc.in_features, 25)
+    )
+    model = model.to(device)
+
+    optimizer = torch.optim.Adam(
+        model.fc.parameters(),
+        lr=1e-3,
+        weight_decay=1e-4
+    )
+
+    criterion = nn.CrossEntropyLoss()
+
+    train_model(
+        model,
+        small_train_loader,
+        val_loader,
+        criterion,
+        optimizer,
+        epochs=3   #to help it not run so slow 
+    )
+
+    y_true, y_pred = evaluate_model(model, val_loader)
+    acc = np.mean(np.array(y_true) == np.array(y_pred))
+
+    results[n] = acc
+
+
+#Prints validation results 
+
+for k, v in results.items():
+    print(f"{k} images → Val Accuracy: {v:.3f}")
+
+### overall result/comparison 
+### performance improves substantially with more labeled data!
+### 2000 labeled images has the best results for all key performance test.
